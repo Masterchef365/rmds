@@ -1,0 +1,18 @@
+[package]
+name = "rmds"
+version = "0.1.0"
+authors = ["Masterchef365 <duncan.freeman1@gmail.com>"]
+edition = "2018"
+
+[features]
+default = ["shaderc"]
+
+[dependencies]
+vk_core = { path = "../vk_core" }
+erupt = "0.15"
+genmap = "1.0"
+anyhow = "1"
+shaderc = { version = "0.7", optional = true }
+
+[dev-dependencies]
+bytemuck = "1.4"
