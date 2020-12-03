@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     let mut engine = Engine::new()?;
     let shader = engine.glsl(SHADER_SRC)?;
     const INVOKE_X: u32 = 50;
-    let mut data: Vec<u32> = (0..).take((LOCAL_SIZE_X * INVOKE_X) as usize).collect(); 
+    let mut data: Vec<u32> = (0..).take((LOCAL_SIZE_X * INVOKE_X) as _).collect();
     let data_mut: &mut [u8] = bytemuck::cast_slice_mut(&mut data);
 
     let buffer = engine.buffer(data_mut.len())?;
