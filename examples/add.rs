@@ -18,7 +18,7 @@ void main() {
 "#;
 
 fn main() -> Result<()> {
-    let mut engine = Engine::new()?;
+    let mut engine = Engine::new(true)?;
     let shader = engine.glsl(SHADER_SRC)?;
     const INVOKE_X: u32 = 50;
     let mut data: Vec<u32> = (0..).take((LOCAL_SIZE_X * INVOKE_X) as _).collect();

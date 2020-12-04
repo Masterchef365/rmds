@@ -214,6 +214,8 @@ dependencies = [
  "bytemuck",
  "erupt",
  "genmap",
+ "gpu-alloc",
+ "gpu-alloc-erupt",
  "shaderc",
  "vk_core",
 ]
