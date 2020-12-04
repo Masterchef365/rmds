@@ -239,7 +239,63 @@ impl Engine {
     }
 
     pub fn run(&mut self, shader: Shader, buffer: Buffer, x: u32, y: u32, z: u32) -> Result<()> {
-        todo!()
+        let buffer = self.buffers.get(buffer.0).context("Buffer was deleted")?;
+        let pipeline = *self.shaders.get(shader.0).context("Shader was deleted")?;
+
+        unsafe {
+            self.core.device.update_descriptor_sets(
+                &[vk::WriteDescriptorSetBuilder::new()
+                    .dst_set(self.descriptor_set)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
+                        .buffer(buffer.buffer)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)])],
+                &[],
+            );
+            self.core
+                .device
+                .reset_command_buffer(self.command_buffer, None)
+                .result()?;
+            let begin_info = vk::CommandBufferBeginInfoBuilder::new();
+            self.core
+                .device
+                .begin_command_buffer(self.command_buffer, &begin_info)
+                .result()?;
+
+            self.core.device.cmd_bind_descriptor_sets(
+                self.command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_layout,
+                0,
+                &[self.descriptor_set],
+                &[],
+            );
+
+            self.core.device.cmd_bind_pipeline(
+                self.command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline,
+            );
+
+            self.core.device.cmd_dispatch(self.command_buffer, x, y, z);
+
+            self.core
+                .device
+                .end_command_buffer(self.command_buffer)
+                .result()?;
+
+            let command_buffers = [self.command_buffer];
+            let submit_info = vk::SubmitInfoBuilder::new().command_buffers(&command_buffers);
+            self.core
+                .device
+                .queue_submit(self.core.queue, &[submit_info], None)
+                .result()?;
+            self.core.device.queue_wait_idle(self.core.queue).result()?;
+        }
+
+        Ok(())
     }
 }
 
