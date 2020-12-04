@@ -1,9 +1,10 @@
 #![allow(unused)]
-use anyhow::Result;
+use anyhow::{Context, Result};
 use erupt::vk1_0 as vk;
 use genmap::{GenMap, Handle};
 use gpu_alloc::{MemoryBlock, Request};
 use gpu_alloc_erupt::EruptMemoryDevice;
+use std::ffi::CString;
 use std::path::Path;
 use vk_core::SharedCore;
 
@@ -16,6 +17,7 @@ struct StorageBuffer {
 pub struct Engine {
     buffers: GenMap<StorageBuffer>,
     shaders: GenMap<vk::Pipeline>,
+    pipeline_layout: vk::PipelineLayout,
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -29,6 +31,8 @@ pub struct Buffer(pub(crate) Handle);
 
 #[derive(Copy, Clone)]
 pub struct Shader(pub(crate) Handle);
+
+const SHADER_ENTRY: &str = "main";
 
 impl Engine {
     pub fn new(validation: bool) -> Result<Self> {
@@ -87,7 +91,14 @@ impl Engine {
         let descriptor_set =
             unsafe { core.device.allocate_descriptor_sets(&create_info) }.result()?[0];
 
+        // Pipeline layout
+        let create_info =
+            vk::PipelineLayoutCreateInfoBuilder::new().set_layouts(&descriptor_set_layouts);
+        let pipeline_layout =
+            unsafe { core.device.create_pipeline_layout(&create_info, None, None) }.result()?;
+
         Ok(Self {
+            pipeline_layout,
             descriptor_set,
             descriptor_pool,
             descriptor_set_layout,
@@ -112,12 +123,59 @@ impl Engine {
     }
 
     pub fn spirv(&mut self, spv: &[u8]) -> Result<Shader> {
-        todo!()
+        // Create module
+        let shader_decoded = erupt::utils::decode_spv(spv).context("Shader decode failed")?;
+        let create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&shader_decoded);
+        let shader_module = unsafe {
+            self.core
+                .device
+                .create_shader_module(&create_info, None, None)
+        }
+        .result()?;
+
+        let entry_point = CString::new(SHADER_ENTRY)?;
+
+        // Create stage
+        let stage = vk::PipelineShaderStageCreateInfoBuilder::new()
+            .stage(vk::ShaderStageFlagBits::COMPUTE)
+            .module(shader_module)
+            .name(&entry_point)
+            .build();
+        let create_info = vk::ComputePipelineCreateInfoBuilder::new()
+            .stage(stage)
+            .layout(self.pipeline_layout);
+
+        // Create pipeline
+        let pipeline = unsafe {
+            self.core
+                .device
+                .create_compute_pipelines(None, &[create_info], None)
+        }
+        .result()?[0];
+
+        // Clean up
+        unsafe {
+            self.core
+                .device
+                .destroy_shader_module(Some(shader_module), None);
+        }
+
+        Ok(Shader(self.shaders.insert(pipeline)))
     }
 
     #[cfg(feature = "shaderc")]
     pub fn glsl(&mut self, glsl: &str) -> Result<Shader> {
-        todo!()
+        // TODO: Memoize compiler?
+        let mut compiler = shaderc::Compiler::new().context("Could not find shaderc")?;
+        let binary_result = compiler.compile_into_spirv(
+            glsl,
+            shaderc::ShaderKind::Compute,
+            "shader.glsl",
+            SHADER_ENTRY,
+            None,
+        )?;
+
+        self.spirv(binary_result.as_binary_u8())
     }
 
     pub fn run(&mut self, shader: Shader, buffer: Buffer, x: u32, y: u32, z: u32) -> Result<()> {
@@ -130,12 +188,19 @@ impl Drop for Engine {
         unsafe {
             self.core.device.queue_wait_idle(self.core.queue);
 
+            for pipeline in self.shaders.iter() {
+                let pipeline = self.shaders.get(pipeline).unwrap();
+                self.core.device.destroy_pipeline(Some(*pipeline), None);
+            }
             self.core
                 .device
                 .destroy_descriptor_pool(Some(self.descriptor_pool), None);
             self.core
                 .device
                 .destroy_command_pool(Some(self.command_pool), None);
+            self.core
+                .device
+                .destroy_pipeline_layout(Some(self.pipeline_layout), None);
             self.core
                 .device
                 .destroy_descriptor_set_layout(Some(self.descriptor_set_layout), None);
