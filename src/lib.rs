@@ -1,5 +1,5 @@
 #![allow(unused)]
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use erupt::vk1_0 as vk;
 use genmap::{GenMap, Handle};
 use gpu_alloc::{MemoryBlock, Request};
@@ -10,8 +10,8 @@ use vk_core::SharedCore;
 
 struct StorageBuffer {
     buffer: vk::Buffer,
-    allocation: Option<MemoryBlock<vk::DeviceMemory>>,
-    length: usize,
+    allocation: MemoryBlock<vk::DeviceMemory>,
+    length: u64,
 }
 
 pub struct Engine {
@@ -110,8 +110,47 @@ impl Engine {
         })
     }
 
-    pub fn buffer(&mut self, len: usize) -> Result<Buffer> {
-        todo!()
+    pub fn buffer(&mut self, length: u64) -> Result<Buffer> {
+        ensure!(length > 0, "Buffer length must be > 0");
+
+        // Create a buffer
+        let create_info = vk::BufferCreateInfoBuilder::new()
+            .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .size(length);
+
+        let buffer = unsafe { self.core.device.create_buffer(&create_info, None, None) }.result()?;
+
+        // Allocate memory for it
+        use gpu_alloc::UsageFlags;
+        let usage = UsageFlags::DOWNLOAD | UsageFlags::UPLOAD | gpu_alloc::UsageFlags::HOST_ACCESS;
+
+        let request = Request {
+            size: length as _,
+            align_mask: std::mem::align_of::<f32>() as _,
+            usage,
+            memory_types: !0,
+        };
+
+        let allocation = unsafe {
+            self.core.allocator()?
+                .alloc(EruptMemoryDevice::wrap(&self.core.device), request)?
+        };
+
+        // Bind that memory
+        unsafe {
+            self.core.device
+                .bind_buffer_memory(buffer, *allocation.memory(), allocation.offset())
+                .result()?;
+        }
+
+        let storage_buffer = StorageBuffer {
+            buffer,
+            length,
+            allocation,
+        };
+
+        Ok(Buffer(self.buffers.insert(storage_buffer)))
     }
 
     pub fn write(&mut self, buffer: Buffer, data: &[u8]) -> Result<()> {
@@ -192,6 +231,16 @@ impl Drop for Engine {
                 let pipeline = self.shaders.get(pipeline).unwrap();
                 self.core.device.destroy_pipeline(Some(*pipeline), None);
             }
+
+            for buffer in self.buffers.iter().collect::<Vec<_>>() {
+                let buffer = self.buffers.remove(buffer).unwrap();
+                self.core.allocator().unwrap().dealloc(
+                    EruptMemoryDevice::wrap(&self.core.device),
+                    buffer.allocation,
+                );
+                self.core.device.destroy_buffer(Some(buffer.buffer), None);
+            }
+
             self.core
                 .device
                 .destroy_descriptor_pool(Some(self.descriptor_pool), None);

@@ -24,7 +24,7 @@ fn main() -> Result<()> {
     let mut data: Vec<u32> = (0..).take((LOCAL_SIZE_X * INVOKE_X) as _).collect();
     let data_mut: &mut [u8] = bytemuck::cast_slice_mut(&mut data);
 
-    let buffer = engine.buffer(data_mut.len())?;
+    let buffer = engine.buffer(data_mut.len() as _)?;
     engine.write(buffer, data_mut)?;
     engine.run(shader, buffer, INVOKE_X, 1, 1)?;
     engine.read(buffer, data_mut)?;
