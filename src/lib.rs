@@ -119,7 +119,8 @@ impl Engine {
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .size(length);
 
-        let buffer = unsafe { self.core.device.create_buffer(&create_info, None, None) }.result()?;
+        let buffer =
+            unsafe { self.core.device.create_buffer(&create_info, None, None) }.result()?;
 
         // Allocate memory for it
         use gpu_alloc::UsageFlags;
@@ -133,13 +134,15 @@ impl Engine {
         };
 
         let allocation = unsafe {
-            self.core.allocator()?
+            self.core
+                .allocator()?
                 .alloc(EruptMemoryDevice::wrap(&self.core.device), request)?
         };
 
         // Bind that memory
         unsafe {
-            self.core.device
+            self.core
+                .device
                 .bind_buffer_memory(buffer, *allocation.memory(), allocation.offset())
                 .result()?;
         }
@@ -154,11 +157,29 @@ impl Engine {
     }
 
     pub fn write(&mut self, buffer: Buffer, data: &[u8]) -> Result<()> {
-        todo!()
+        let buffer = self
+            .buffers
+            .get_mut(buffer.0)
+            .context("Buffer was deleted")?;
+        unsafe {
+            buffer
+                .allocation
+                .write_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, data)?;
+        }
+        Ok(())
     }
 
     pub fn read(&mut self, buffer: Buffer, data: &mut [u8]) -> Result<()> {
-        todo!()
+        let buffer = self
+            .buffers
+            .get_mut(buffer.0)
+            .context("Buffer was deleted")?;
+        unsafe {
+            buffer
+                .allocation
+                .read_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, data)?;
+        }
+        Ok(())
     }
 
     pub fn spirv(&mut self, spv: &[u8]) -> Result<Shader> {
