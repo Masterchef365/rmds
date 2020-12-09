@@ -258,6 +258,7 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "vk_core"
 version = "0.1.0"
+source = "git+https://github.com/Masterchef365/vk_core.git?branch=descriptor_set_allocator#37d3f6ec5018e6cb7a91c6c8023a17b56ddda493"
 dependencies = [
  "anyhow",
  "erupt",
