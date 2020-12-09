@@ -57,11 +57,18 @@ impl Engine {
             unsafe { core.device.allocate_command_buffers(&allocate_info) }.result()?[0];
 
         // Create descriptor set layout
-        let bindings = [vk::DescriptorSetLayoutBindingBuilder::new()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)];
+        let bindings = [
+            vk::DescriptorSetLayoutBindingBuilder::new()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBindingBuilder::new()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        ];
 
         let create_info = vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&bindings);
 
@@ -74,7 +81,7 @@ impl Engine {
         // Create descriptor pool
         let pool_sizes = vec![vk::DescriptorPoolSizeBuilder::new()
             ._type(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1)];
+            .descriptor_count(2)];
 
         // Create descriptor pool of appropriate size
         let create_info = vk::DescriptorPoolCreateInfoBuilder::new()
@@ -238,20 +245,45 @@ impl Engine {
         self.spirv(binary_result.as_binary_u8())
     }
 
-    pub fn run(&mut self, shader: Shader, buffer: Buffer, x: u32, y: u32, z: u32) -> Result<()> {
-        let buffer = self.buffers.get(buffer.0).context("Buffer was deleted")?;
+    pub fn run(
+        &mut self,
+        shader: Shader,
+        read: Buffer,
+        write: Buffer,
+        x: u32,
+        y: u32,
+        z: u32,
+    ) -> Result<()> {
+        let read = self
+            .buffers
+            .get(read.0)
+            .context("Read buffer was deleted")?;
+        let write = self
+            .buffers
+            .get(write.0)
+            .context("Write buffer was deleted")?;
         let pipeline = *self.shaders.get(shader.0).context("Shader was deleted")?;
 
         unsafe {
             self.core.device.update_descriptor_sets(
-                &[vk::WriteDescriptorSetBuilder::new()
-                    .dst_set(self.descriptor_set)
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
-                        .buffer(buffer.buffer)
-                        .offset(0)
-                        .range(vk::WHOLE_SIZE)])],
+                &[
+                    vk::WriteDescriptorSetBuilder::new()
+                        .dst_set(self.descriptor_set)
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
+                            .buffer(read.buffer)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)]),
+                    vk::WriteDescriptorSetBuilder::new()
+                        .dst_set(self.descriptor_set)
+                        .dst_binding(1)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
+                            .buffer(write.buffer)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)]),
+                ],
                 &[],
             );
             self.core
