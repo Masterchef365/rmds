@@ -16,6 +16,4 @@ anyhow = "1"
 shaderc = { version = "0.7", optional = true }
 gpu-alloc-erupt = "0.1"
 gpu-alloc = "0.2"
-
-[dev-dependencies]
 bytemuck = "1.4"

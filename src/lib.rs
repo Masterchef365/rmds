@@ -7,11 +7,12 @@ use gpu_alloc_erupt::EruptMemoryDevice;
 use std::ffi::CString;
 use std::path::Path;
 use vk_core::SharedCore;
+use bytemuck::Pod;
 
 struct StorageBuffer {
     buffer: vk::Buffer,
     allocation: MemoryBlock<vk::DeviceMemory>,
-    length: u64,
+    size_bytes: usize,
 }
 
 pub struct Engine {
@@ -117,14 +118,15 @@ impl Engine {
         })
     }
 
-    pub fn buffer(&mut self, length: u64) -> Result<Buffer> {
+    pub fn buffer<T: Pod>(&mut self, length: usize) -> Result<Buffer> {
         ensure!(length > 0, "Buffer length must be > 0");
+        let size_bytes = length * std::mem::size_of::<T>();
 
         // Create a buffer
         let create_info = vk::BufferCreateInfoBuilder::new()
             .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .size(length);
+            .size(size_bytes as _);
 
         let buffer =
             unsafe { self.core.device.create_buffer(&create_info, None, None) }.result()?;
@@ -134,8 +136,8 @@ impl Engine {
         let usage = UsageFlags::DOWNLOAD | UsageFlags::UPLOAD | gpu_alloc::UsageFlags::HOST_ACCESS;
 
         let request = Request {
-            size: length as _,
-            align_mask: std::mem::align_of::<f32>() as _,
+            size: size_bytes as _,
+            align_mask: std::mem::align_of::<T>() as _,
             usage,
             memory_types: !0,
         };
@@ -156,35 +158,37 @@ impl Engine {
 
         let storage_buffer = StorageBuffer {
             buffer,
-            length,
+            size_bytes,
             allocation,
         };
 
         Ok(Buffer(self.buffers.insert(storage_buffer)))
     }
 
-    pub fn write(&mut self, buffer: Buffer, data: &[u8]) -> Result<()> {
+    pub fn write<T: Pod>(&mut self, buffer: Buffer, data: &[T]) -> Result<()> {
         let buffer = self
             .buffers
             .get_mut(buffer.0)
             .context("Buffer was deleted")?;
+        ensure!(buffer.size_bytes == std::mem::size_of_val(data), "Buffer size must match!");
         unsafe {
             buffer
                 .allocation
-                .write_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, data)?;
+                .write_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, bytemuck::cast_slice(data))?;
         }
         Ok(())
     }
 
-    pub fn read(&mut self, buffer: Buffer, data: &mut [u8]) -> Result<()> {
+    pub fn read<T: Pod>(&mut self, buffer: Buffer, data: &mut [T]) -> Result<()> {
         let buffer = self
             .buffers
             .get_mut(buffer.0)
             .context("Buffer was deleted")?;
+        ensure!(buffer.size_bytes == std::mem::size_of_val(data), "Buffer size must match!");
         unsafe {
             buffer
                 .allocation
-                .read_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, data)?;
+                .read_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, bytemuck::cast_slice_mut(data))?;
         }
         Ok(())
     }
