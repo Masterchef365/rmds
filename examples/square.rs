@@ -26,13 +26,12 @@ fn main() -> Result<()> {
     let shader = engine.glsl(SHADER_SRC)?;
     const INVOKE_X: u32 = 50;
     let mut data: Vec<u32> = (0..).take((LOCAL_SIZE_X * INVOKE_X) as _).collect();
-    let data_mut: &mut [u8] = bytemuck::cast_slice_mut(&mut data);
 
-    let input = engine.buffer(data_mut.len() as _)?;
-    let output = engine.buffer(data_mut.len() as _)?;
-    engine.write(input, data_mut)?;
+    let input = engine.buffer::<u32>(data.len())?;
+    let output = engine.buffer::<u32>(data.len())?;
+    engine.write::<u32>(input, &data)?;
     engine.run(shader, input, output, INVOKE_X, 1, 1)?;
-    engine.read(output, data_mut)?;
+    engine.read::<u32>(output, &mut data)?;
 
     dbg!(data);
 
