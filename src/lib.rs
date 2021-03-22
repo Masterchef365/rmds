@@ -258,6 +258,7 @@ impl Engine {
         y: u32,
         z: u32,
     ) -> Result<()> {
+        assert!(x > 0 && y > 0 && z > 0);
         let read = self
             .buffers
             .get(read.0)
