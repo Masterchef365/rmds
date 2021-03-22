@@ -99,9 +99,17 @@ impl Engine {
         let descriptor_set =
             unsafe { core.device.allocate_descriptor_sets(&create_info) }.result()?[0];
 
+        // Push cosntant ranges
+        let push_constant_ranges = [vk::PushConstantRangeBuilder::new()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .offset(0)
+            .size(128)];
+
         // Pipeline layout
         let create_info =
-            vk::PipelineLayoutCreateInfoBuilder::new().set_layouts(&descriptor_set_layouts);
+            vk::PipelineLayoutCreateInfoBuilder::new()
+            .push_constant_ranges(&push_constant_ranges)
+            .set_layouts(&descriptor_set_layouts);
         let pipeline_layout =
             unsafe { core.device.create_pipeline_layout(&create_info, None, None) }.result()?;
 
@@ -257,6 +265,7 @@ impl Engine {
         x: u32,
         y: u32,
         z: u32,
+        push_constant: &[u8],
     ) -> Result<()> {
         let read = self
             .buffers
@@ -299,6 +308,20 @@ impl Engine {
                 .device
                 .begin_command_buffer(self.command_buffer, &begin_info)
                 .result()?;
+
+            let push_constant = if push_constant.is_empty() {
+                &[0; 4]
+            } else {
+                push_constant
+            };
+            self.core.device.cmd_push_constants(
+                self.command_buffer,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                push_constant.len() as u32,
+                push_constant.as_ptr() as _,
+            );
 
             self.core.device.cmd_bind_descriptor_sets(
                 self.command_buffer,

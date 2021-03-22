@@ -14,10 +14,14 @@ layout(binding = 1) writeonly buffer OutputData {
     uint outp[];
 };
 
+layout(push_constant) uniform Push {
+    uint push;
+};
+
 void main() {
     uint gid = gl_GlobalInvocationID.x;
     if (gid >= inp.length()) return;
-    outp[gid] = inp[gid] * inp[gid];
+    outp[gid] = inp[gid] * inp[gid] * push;
 }
 "#;
 
@@ -30,7 +34,7 @@ fn main() -> Result<()> {
     let input = engine.buffer::<u32>(data.len())?;
     let output = engine.buffer::<u32>(data.len())?;
     engine.write::<u32>(input, &data)?;
-    engine.run(shader, input, output, INVOKE_X, 1, 1, &[])?;
+    engine.run(shader, input, output, INVOKE_X, 1, 1, &5u32.to_le_bytes())?;
     engine.read::<u32>(output, &mut data)?;
 
     dbg!(data);
