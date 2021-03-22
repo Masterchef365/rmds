@@ -2,7 +2,7 @@
 use anyhow::{ensure, Context, Result};
 use erupt::vk1_0 as vk;
 use genmap::{GenMap, Handle};
-use gpu_alloc::{MemoryBlock, Request};
+use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_erupt::EruptMemoryDevice;
 use std::ffi::CString;
 use std::path::Path;
@@ -10,6 +10,9 @@ use vk_core::SharedCore;
 use bytemuck::Pod;
 
 struct StorageBuffer {
+    // TODO: Only one staging buffer! We're single threaded anyhow...
+    staging_buffer: vk::Buffer,
+    staging_allocation: MemoryBlock<vk::DeviceMemory>,
     buffer: vk::Buffer,
     allocation: MemoryBlock<vk::DeviceMemory>,
     size_bytes: usize,
@@ -126,13 +129,14 @@ impl Engine {
         })
     }
 
-    pub fn buffer<T: Pod>(&mut self, length: usize) -> Result<Buffer> {
-        ensure!(length > 0, "Buffer length must be > 0");
-        let size_bytes = length * std::mem::size_of::<T>();
-
-        // Create a buffer
+    fn internal_create_buffer<T: Pod>(&mut self, mem_usage: UsageFlags, size_bytes: usize) -> Result<(MemoryBlock<vk::DeviceMemory>, vk::Buffer)> {
+        // Create a staging buffer
         let create_info = vk::BufferCreateInfoBuilder::new()
-            .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+            .usage(
+                vk::BufferUsageFlags::STORAGE_BUFFER | 
+                vk::BufferUsageFlags::TRANSFER_SRC | 
+                vk::BufferUsageFlags::TRANSFER_DST
+            )
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .size(size_bytes as _);
 
@@ -141,12 +145,10 @@ impl Engine {
 
         // Allocate memory for it
         use gpu_alloc::UsageFlags;
-        let usage = UsageFlags::DOWNLOAD | UsageFlags::UPLOAD | gpu_alloc::UsageFlags::HOST_ACCESS;
-
         let request = Request {
             size: size_bytes as _,
             align_mask: std::mem::align_of::<T>() as _,
-            usage,
+            usage: mem_usage,
             memory_types: !0,
         };
 
@@ -164,13 +166,69 @@ impl Engine {
                 .result()?;
         }
 
-        let storage_buffer = StorageBuffer {
-            buffer,
+        Ok((allocation, buffer))
+    }
+
+    pub fn buffer<T: Pod>(&mut self, length: usize) -> Result<Buffer> {
+        ensure!(length > 0, "Buffer length must be > 0");
+        let size_bytes = length * std::mem::size_of::<T>();
+
+        let (staging_allocation, staging_buffer) = self.internal_create_buffer::<T>(
+            UsageFlags::DOWNLOAD | UsageFlags::UPLOAD | UsageFlags::HOST_ACCESS,
             size_bytes,
+        )?;
+
+        let (allocation, buffer) = self.internal_create_buffer::<T>(
+            UsageFlags::FAST_DEVICE_ACCESS,
+            size_bytes,
+        )?;
+
+
+        let storage_buffer = StorageBuffer {
             allocation,
+            buffer,
+            staging_buffer,
+            size_bytes,
+            staging_allocation,
         };
 
         Ok(Buffer(self.buffers.insert(storage_buffer)))
+    }
+
+    fn transfer_buffer_internal(&mut self, src: vk::Buffer, dst: vk::Buffer, size_bytes: usize) -> Result<()> {
+        let region = vk::BufferCopyBuilder::new()
+            .src_offset(0)
+            .dst_offset(0)
+            .size(size_bytes as _);
+
+        unsafe {
+            self.core
+                .device
+                .reset_command_buffer(self.command_buffer, None)
+                .result()?;
+            let begin_info = vk::CommandBufferBeginInfoBuilder::new();
+            self.core
+                .device
+                .begin_command_buffer(self.command_buffer, &begin_info)
+                .result()?;
+            self.core
+                .device
+                .cmd_copy_buffer(self.command_buffer, src, dst, &[region]);
+            self.core
+                .device
+                .end_command_buffer(self.command_buffer)
+                .result()?;
+            let command_buffers = [self.command_buffer];
+            let submit_info = vk::SubmitInfoBuilder::new().command_buffers(&command_buffers);
+            self.core
+                .device
+                .queue_submit(self.core.queue, &[submit_info], None)
+                .result()?;
+            // TODO: Use a fence here!!
+            self.core.device.queue_wait_idle(self.core.queue).result()?;
+        }
+
+        Ok(())
     }
 
     pub fn write<T: Pod>(&mut self, buffer: Buffer, data: &[T]) -> Result<()> {
@@ -181,21 +239,35 @@ impl Engine {
         ensure!(std::mem::size_of_val(data) <= buffer.size_bytes, "Buffer size must best < gpu buffer!");
         unsafe {
             buffer
-                .allocation
+                .staging_allocation
                 .write_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, bytemuck::cast_slice(data))?;
         }
+        let src = buffer.staging_buffer;
+        let dst = buffer.buffer;
+        let size_bytes = buffer.size_bytes;
+        self.transfer_buffer_internal(src, dst, size_bytes)?;
         Ok(())
     }
 
     pub fn read<T: Pod>(&mut self, buffer: Buffer, data: &mut [T]) -> Result<()> {
+        {
+            let buffer = self
+                .buffers
+                .get_mut(buffer.0)
+                .context("Buffer was deleted")?;
+            ensure!(std::mem::size_of_val(data) <= buffer.size_bytes, "Buffer size must best < gpu buffer!");
+            let src = buffer.buffer;
+            let dst = buffer.staging_buffer;
+            let size_bytes = buffer.size_bytes;
+            self.transfer_buffer_internal(src, dst, size_bytes)?;
+        }
         let buffer = self
             .buffers
             .get_mut(buffer.0)
             .context("Buffer was deleted")?;
-        ensure!(std::mem::size_of_val(data) <= buffer.size_bytes, "Buffer size must best < gpu buffer!");
         unsafe {
             buffer
-                .allocation
+                .staging_allocation
                 .read_bytes(EruptMemoryDevice::wrap(&self.core.device), 0, bytemuck::cast_slice_mut(data))?;
         }
         Ok(())
@@ -373,8 +445,13 @@ impl Drop for Engine {
                 let buffer = self.buffers.remove(buffer).unwrap();
                 self.core.allocator().unwrap().dealloc(
                     EruptMemoryDevice::wrap(&self.core.device),
+                    buffer.staging_allocation,
+                );
+                self.core.allocator().unwrap().dealloc(
+                    EruptMemoryDevice::wrap(&self.core.device),
                     buffer.allocation,
                 );
+                self.core.device.destroy_buffer(Some(buffer.staging_buffer), None);
                 self.core.device.destroy_buffer(Some(buffer.buffer), None);
             }
 
