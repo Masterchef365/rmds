@@ -178,7 +178,7 @@ impl Engine {
             .buffers
             .get_mut(buffer.0)
             .context("Buffer was deleted")?;
-        ensure!(buffer.size_bytes == std::mem::size_of_val(data), "Buffer size must match!");
+        ensure!(std::mem::size_of_val(data) <= buffer.size_bytes, "Buffer size must best < gpu buffer!");
         unsafe {
             buffer
                 .allocation
@@ -192,7 +192,7 @@ impl Engine {
             .buffers
             .get_mut(buffer.0)
             .context("Buffer was deleted")?;
-        ensure!(buffer.size_bytes == std::mem::size_of_val(data), "Buffer size must match!");
+        ensure!(std::mem::size_of_val(data) <= buffer.size_bytes, "Buffer size must best < gpu buffer!");
         unsafe {
             buffer
                 .allocation
